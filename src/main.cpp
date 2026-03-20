@@ -1,12 +1,11 @@
 #include <iostream>
-
-
-int lol();
-
+#include "net/peer.hpp"
 
 int main() {
-    std::cout << "\033[2J\033[H";
-    std::cout << "BRIDGE starting...\n";
-    lol();
+    Peer p(5001);
+
+    p.start();
+    p.connect(RemotePeer{"10.218.136.229", 5000, "ABCDEFG"});
+    getchar();
     return 0;
 }
