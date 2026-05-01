@@ -11,7 +11,7 @@ class Peer {
 public:
     Peer(int tcp_port);
     void start();
-    void discover(); // UDP broadcast (implement later)
+    void discover(); // UDP broadcast for peer discovery
 
     void connect(const RemotePeer& peer);
 
