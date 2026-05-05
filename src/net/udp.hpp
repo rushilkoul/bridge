@@ -1,16 +1,14 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "peer.hpp"
 
-// UDP broadcast for peer discovery
+struct RemotePeer;
+class Peer;
+
 void broadcast_discovery(int port, const std::string& peer_name);
 
-// Send UDP message to a specific peer
 void send_udp(const std::string& ip, int port, const std::string& message);
 
-// Listen for incoming UDP discovery messages
-void start_udp_listener(int port);
+void start_udp_listener(int port, Peer* peer_ptr);
 
-// Parse discovery message to extract peer info
-RemotePeer parse_discovery_message(const std::string& message, const std::string& sender_ip);
+RemotePeer parse_discovery_message(const std::string& message, const std::string& sender_ip, int port);

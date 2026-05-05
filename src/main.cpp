@@ -64,7 +64,7 @@ static void draw_header(WINDOW* win, const std::string& my_name, int cols) {
     wrefresh(win);
 }
 
-static void draw_sidebar(WINDOW* win, int local_port, const std::vector<Connection>& conns, int max_rows)
+static void draw_sidebar(WINDOW* win, int local_port, const std::vector<RemotePeer>& discovered, int max_rows, int selected_idx)
 {
     werase(win);
 
@@ -88,12 +88,17 @@ static void draw_sidebar(WINDOW* win, int local_port, const std::vector<Connecti
     mvwprintw(win, 2, 1, "Connections");
     wattroff(win, A_BOLD);
 
-    for (size_t i = 0; i < conns.size(); i++) {
+    for (size_t i = 0; i < discovered.size(); i++) {
         int row = 3 + (int)i;
         if (row >= max_rows - 2) break;
-        wattron(win, COLOR_PAIR(4));
-        mvwprintw(win, row, 2, "%s", conns[i].name.c_str());
-        wattroff(win, COLOR_PAIR(4));
+        
+        if ((int)i == selected_idx) {
+            wattron(win, COLOR_PAIR(2) | A_BOLD | A_REVERSE);
+        } else {
+            wattron(win, COLOR_PAIR(4));
+        }
+        mvwprintw(win, row, 2, "%s", discovered[i].name.c_str());
+        wattroff(win, COLOR_PAIR(4) | COLOR_PAIR(2) | A_BOLD | A_REVERSE);
     }
 
     wrefresh(win);
@@ -142,16 +147,13 @@ static void draw_input(WINDOW* win, const std::string& buf, int cols) {
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 4) {
-        fprintf(stderr, "Usage: bridge <local_port> <target_ip> <target_port>\n");
+    if (argc < 2) {
+        fprintf(stderr, "Usage: bridge <local_port>\n");
         return 1;
     }
 
-    int local_port  = std::stoi(argv[1]);
-    std::string tip = argv[2];
-    int target_port = std::stoi(argv[3]);
+    int local_port = std::stoi(argv[1]);
     system("clear");
-
 
     printf("Enter display name: ");
     fflush(stdout);
@@ -185,12 +187,11 @@ int main(int argc, char* argv[]) {
 
     p.start();
 
-    if (target_port != 0)
-        p.connect(RemotePeer{tip, target_port, "unknown peer"});
-
-
     std::string input_buf;
     std::mutex  input_mutex;
+    std::mutex  peer_idx_mutex;
+    int selected_peer_idx = -1; 
+    int current_connection_idx = -1;  // (-1 means not connected)
 
     wtimeout(wins.input, -1);
 
@@ -198,20 +199,48 @@ int main(int argc, char* argv[]) {
         while (true) {
             int ch = wgetch(wins.input);
 
-            {
-                std::lock_guard<std::mutex> lk(input_mutex);
-
-                if (ch == '\n' || ch == KEY_ENTER) {
-                    if (!input_buf.empty()) {
-                        p.send_to(0, input_buf);
-                        input_buf.clear();
-                    }
-                } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
-                    if (!input_buf.empty())
-                        input_buf.pop_back();
-                } else if (ch >= 32 && ch < 127) {
-                    input_buf += (char)ch;
+            if (ch == KEY_UP) {
+                std::lock_guard<std::mutex> lk(peer_idx_mutex);
+                auto discovered = p.get_discovered_peers();
+                if (selected_peer_idx > 0) {
+                    selected_peer_idx--;
+                } else if (!discovered.empty()) {
+                    selected_peer_idx = discovered.size() - 1;
                 }
+            } else if (ch == KEY_DOWN) {
+                std::lock_guard<std::mutex> lk(peer_idx_mutex);
+                auto discovered = p.get_discovered_peers();
+                if ((int)discovered.size() > 0 && selected_peer_idx < (int)discovered.size() - 1) {
+                    selected_peer_idx++;
+                } else if (!discovered.empty()) {
+                    selected_peer_idx = 0;
+                }
+            } else if (ch == '\n' || ch == KEY_ENTER) {
+                if (current_connection_idx >= 0) {
+                    // connected: send stuff
+                    {
+                        std::lock_guard<std::mutex> lk(input_mutex);
+                        if (!input_buf.empty()) {
+                            p.send_to(current_connection_idx, input_buf);
+                            input_buf.clear();
+                        }
+                    }
+                } else {
+                    // not connected: connect to it
+                    std::lock_guard<std::mutex> lk(peer_idx_mutex);
+                    auto discovered = p.get_discovered_peers();
+                    if (selected_peer_idx >= 0 && selected_peer_idx < (int)discovered.size()) {
+                        p.connect(discovered[selected_peer_idx]);
+                        current_connection_idx = 0;
+                    }
+                }
+            } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+                std::lock_guard<std::mutex> lk(input_mutex);
+                if (!input_buf.empty())
+                    input_buf.pop_back();
+            } else if (ch >= 32 && ch < 127 && current_connection_idx >= 0) {
+                std::lock_guard<std::mutex> lk(input_mutex);
+                input_buf += (char)ch;
             }
 
             // probably a bad way to do this, but redraw input on every keypress. 
@@ -236,8 +265,11 @@ int main(int argc, char* argv[]) {
             refresh();
         }
 
-        draw_header(wins.header, my_name, wins.cols);
-        draw_sidebar(wins.sidebar, local_port, p.get_connections(), wins.rows);
+        {
+            std::lock_guard<std::mutex> lk(peer_idx_mutex);
+            draw_header(wins.header, my_name, wins.cols);
+            draw_sidebar(wins.sidebar, local_port, p.get_discovered_peers(), wins.rows, selected_peer_idx);
+        }
         draw_messages(wins.messages, p.get_messages());
 
         {
