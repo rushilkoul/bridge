@@ -10,9 +10,10 @@ add_compile_options(
     -Wpedantic
 )
 
+find_package(Curses REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS src/*.cpp)
 
 add_executable(bridge ${SRC_FILES})
 
-target_link_libraries(bridge PRIVATE pthread)
+target_link_libraries(bridge PRIVATE ${CURSES_LIBRARIES})
