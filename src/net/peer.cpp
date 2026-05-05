@@ -1,5 +1,6 @@
 #include "peer.hpp"
 #include "udp.hpp"
+#include "encryption.hpp"
 #include <thread>
 #include <iostream>
 #include <unistd.h>
@@ -70,7 +71,7 @@ void Peer::tcp_server() {
         if (client >= 0) {
             {
                 std::lock_guard<std::mutex> lock(conn_mutex);
-                connections.push_back({ .socket = client, .name = "incoming" });
+                connections.push_back({ .socket = client, .name = "incoming", .shared_key = "" });
             }
             send_message(client, "NAME " + name + "\n");
 
@@ -80,6 +81,8 @@ void Peer::tcp_server() {
 }
 void Peer::handle_client(int client) {
     std::string leftover;
+    std::string peer_name;
+    std::string encryption_key;
 
     while (true) {
         char buf[1024];
@@ -96,11 +99,23 @@ void Peer::handle_client(int client) {
             if (msg.empty()) continue;
 
             if (msg.rfind("NAME ", 0) == 0) {
-                std::string new_name = msg.substr(5);
+                peer_name = msg.substr(5);
+                
+                std::string key1 = name;
+                std::string key2 = peer_name;
+                if (key1 > key2) std::swap(key1, key2);
+                encryption_key = key1 + key2;
+                
                 std::lock_guard<std::mutex> lock(conn_mutex);
                 for (auto& conn : connections)
-                    if (conn.socket == client) { conn.name = new_name; break; }
+                    if (conn.socket == client) { 
+                        conn.name = peer_name;
+                        conn.shared_key = encryption_key;
+                        break;
+                    }
             } else {
+                std::string decrypted = decrypt(msg, encryption_key);
+                
                 std::string sender = "unknown";
                 {
                     std::lock_guard<std::mutex> lock(conn_mutex);
@@ -109,7 +124,7 @@ void Peer::handle_client(int client) {
                 }
                 {
                     std::lock_guard<std::mutex> lock(msg_mutex);
-                    messages.push_back({ sender, msg });
+                    messages.push_back({ sender, decrypted });
                 }
             }
         }
@@ -137,18 +152,22 @@ void Peer::discover() {
 void Peer::connect(const RemotePeer& peer) {
     int sock = connect_to_peer(peer.ip, peer.port);
     if (sock >= 0) {
+        std::string key1 = name;
+        std::string key2 = peer.name;
+        if (key1 > key2) std::swap(key1, key2);
+        std::string encryption_key = key1 + key2;
+        
         {
             std::lock_guard<std::mutex> lock(conn_mutex);
             connections.push_back({
                     .socket = sock, 
-                    .name = peer.name
+                    .name = peer.name,
+                    .shared_key = encryption_key
             });
         }
 
-        // send_message(sock, "hello from " + peer.name);
         send_message(sock, "NAME " + name + "\n");
         std::thread(&Peer::handle_client, this, sock).detach();
-        // std::cout << "Connected successfully to " + peer.ip + ":" + std::to_string(peer.port);
     }
 }
 
@@ -161,7 +180,9 @@ void Peer::send_to(int index, const std::string& msg) {
     {
         std::lock_guard<std::mutex> lock(conn_mutex);
         if (index < 0 || index >= (int)connections.size()) return;
-        send_message(connections[index].socket, msg + "\n");
+        
+        std::string encrypted = encrypt(msg, connections[index].shared_key);
+        send_message(connections[index].socket, encrypted + "\n");
     }
     {
         std::lock_guard<std::mutex> lock(msg_mutex);

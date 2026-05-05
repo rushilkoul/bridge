@@ -12,6 +12,7 @@ struct RemotePeer {
 struct Connection {
     int socket;
     std::string name;
+    std::string shared_key;
 };
 
 struct Message {
