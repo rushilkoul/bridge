@@ -1,5 +1,6 @@
 #include "peer.hpp"
 #include "tcp.hpp"
+#include "udp.hpp"
 #include <thread>
 #include <iostream>
 #include <unistd.h> 
@@ -8,7 +9,7 @@ Peer::Peer(int port) : tcp_port(port) {}
 
 void Peer::start() {
     std::thread(&Peer::tcp_server, this).detach();
-    // std::thread(&Peer::udp_listener, this).detach();
+    std::thread(&Peer::udp_listener, this).detach();
 }
 
 void Peer::tcp_server() {
@@ -16,7 +17,12 @@ void Peer::tcp_server() {
 }
 
 void Peer::udp_listener() {
-    // not written yet
+    start_udp_listener(tcp_port);
+}
+
+void Peer::discover() {
+    // TODO: get peer name from configuration
+    broadcast_discovery(tcp_port, "bridge-peer");
 }
 
 void Peer::connect(const RemotePeer& peer) {
