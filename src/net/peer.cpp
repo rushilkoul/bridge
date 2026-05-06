@@ -2,6 +2,7 @@
 #include "udp.hpp"
 #include "encryption.hpp"
 #include <thread>
+#include <chrono>
 #include <iostream>
 #include <unistd.h>
 #include <mutex>
@@ -46,6 +47,7 @@ Peer::Peer(int port, std::string _name) : tcp_port(port), name(_name) {}
 void Peer::start() {
     std::thread(&Peer::tcp_server, this).detach();
     std::thread(&Peer::udp_listener, this).detach();
+    std::thread(&Peer::discovery_broadcast, this).detach();
 }
 
 void Peer::tcp_server() {
@@ -114,17 +116,19 @@ void Peer::handle_client(int client) {
                         break;
                     }
             } else {
-                std::string decrypted = decrypt(msg, encryption_key);
-                
-                std::string sender = "unknown";
-                {
-                    std::lock_guard<std::mutex> lock(conn_mutex);
-                    for (auto& c : connections)
-                        if (c.socket == client) { sender = c.name; break; }
-                }
-                {
-                    std::lock_guard<std::mutex> lock(msg_mutex);
-                    messages.push_back({ sender, decrypted });
+                if (!peer_name.empty()) {
+                    std::string decrypted = decrypt(msg, encryption_key);
+                    
+                    std::string sender = "unknown";
+                    {
+                        std::lock_guard<std::mutex> lock(conn_mutex);
+                        for (auto& c : connections)
+                            if (c.socket == client) { sender = c.name; break; }
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(msg_mutex);
+                        messages.push_back({ sender, decrypted });
+                    }
                 }
             }
         }
@@ -141,7 +145,7 @@ void Peer::handle_client(int client) {
 }
 
 void Peer::udp_listener() {
-    start_udp_listener(tcp_port);
+    start_udp_listener(tcp_port, this);
 }
 
 void Peer::discover() {
@@ -193,4 +197,21 @@ void Peer::send_to(int index, const std::string& msg) {
 std::vector<Message> Peer::get_messages(){
     std::lock_guard<std::mutex> lock(msg_mutex);
     return messages;
+}
+
+void Peer::add_discovered_peer(const RemotePeer& peer) {
+    std::lock_guard<std::mutex> lock(discovered_mutex);
+    discovered_peers.insert(peer);
+}
+
+std::vector<RemotePeer> Peer::get_discovered_peers() {
+    std::lock_guard<std::mutex> lock(discovered_mutex);
+    return std::vector<RemotePeer>(discovered_peers.begin(), discovered_peers.end());
+}
+
+void Peer::discovery_broadcast() {
+    while (true) {
+        broadcast_discovery(tcp_port, name);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
 }
