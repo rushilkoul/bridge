@@ -119,15 +119,9 @@ void Peer::handle_client(int client) {
                 if (!peer_name.empty()) {
                     std::string decrypted = decrypt(msg, encryption_key);
                     
-                    std::string sender = "unknown";
-                    {
-                        std::lock_guard<std::mutex> lock(conn_mutex);
-                        for (auto& c : connections)
-                            if (c.socket == client) { sender = c.name; break; }
-                    }
                     {
                         std::lock_guard<std::mutex> lock(msg_mutex);
-                        messages.push_back({ sender, decrypted });
+                        messages.push_back({ peer_name, decrypted, peer_name });
                     }
                 }
             }
@@ -186,11 +180,12 @@ void Peer::send_to(int index, const std::string& msg) {
         if (index < 0 || index >= (int)connections.size()) return;
         
         std::string encrypted = encrypt(msg, connections[index].shared_key);
+
         send_message(connections[index].socket, encrypted + "\n");
-    }
-    {
-        std::lock_guard<std::mutex> lock(msg_mutex);
-        messages.push_back({ "You", msg });
+        {
+            std::lock_guard<std::mutex> lock(msg_mutex);
+            messages.push_back({ name, msg, connections[index].name });
+        }
     }
 }
 

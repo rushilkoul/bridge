@@ -4,30 +4,36 @@
 #include <vector>
 #include <set>
 
-struct RemotePeer {
+struct RemotePeer
+{
     std::string ip;
     int port;
     std::string name;
-    
-    bool operator<(const RemotePeer& other) const {
-        if (ip != other.ip) return ip < other.ip;
+
+    bool operator<(const RemotePeer &other) const
+    {
+        if (ip != other.ip)
+            return ip < other.ip;
         return port < other.port;
     }
 };
 
-struct Connection {
+struct Connection
+{
     int socket;
     std::string name;
     std::string shared_key;
 };
 
-struct Message {
+struct Message
+{
     std::string sender;
     std::string text;
+    std::string peer_name;
 };
 
-
-class Peer {
+class Peer
+{
 private:
     int tcp_port;
 
@@ -50,10 +56,10 @@ public:
     void start();
     void discover(); // UDP broadcast for peer discovery
 
-    void connect(const RemotePeer& peer);
-    void send_to(int index, const std::string& msg);
-    void add_discovered_peer(const RemotePeer& peer);
-    
+    void connect(const RemotePeer &peer);
+    void send_to(int index, const std::string &msg);
+    void add_discovered_peer(const RemotePeer &peer);
+
     std::string name;
     std::vector<Connection> get_connections();
     std::vector<Message> get_messages();

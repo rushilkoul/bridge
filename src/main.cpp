@@ -104,25 +104,33 @@ static void draw_sidebar(WINDOW* win, int local_port, const std::vector<RemotePe
     wrefresh(win);
 }
 
-static void draw_messages(WINDOW* win, const std::vector<Message>& msgs) {
+static void draw_messages(WINDOW* win, const std::vector<Message>& msgs, const std::string& current_peer, const std::string& my_name) {
     werase(win);
 
     int h, w;
     getmaxyx(win, h, w);
     (void)w;
 
+    std::vector<const Message*> filtered_msgs;
+    for (const auto& m : msgs) {
+        if (m.peer_name == current_peer) {
+            filtered_msgs.push_back(&m);
+        }
+    }
+
     int visible = h;
-    int start   = (int)msgs.size() > visible
-                  ? (int)msgs.size() - visible : 0;
+    int start   = (int)filtered_msgs.size() > visible
+                  ? (int)filtered_msgs.size() - visible : 0;
 
-    for (int i = start; i < (int)msgs.size(); i++) {
+    for (int i = start; i < (int)filtered_msgs.size(); i++) {
         int row = i - start;
-        const auto& m = msgs[i];
+        const auto& m = *filtered_msgs[i];
 
-        int color = (m.sender == "You") ? COLOR_PAIR(4) : COLOR_PAIR(1);
+        std::string display_name = (m.sender == my_name) ? "You" : m.sender;
+        int color = (m.sender == my_name) ? COLOR_PAIR(4) : COLOR_PAIR(1);
 
         wattron(win, color | A_BOLD);
-        mvwprintw(win, row, 0, "%s: ", m.sender.c_str());
+        mvwprintw(win, row, 0, "%s: ", display_name.c_str());
         wattroff(win, color | A_BOLD);
 
         wprintw(win, "%s", m.text.c_str());
@@ -202,48 +210,64 @@ int main(int argc, char* argv[]) {
 
     wtimeout(wins.input, -1);
 
+    // Lambda to select and connect to a peer
+    auto select_peer_and_connect = [&](int peer_idx) {
+        std::lock_guard<std::mutex> lk(peer_idx_mutex);
+        auto discovered = p.get_discovered_peers();
+        if (peer_idx >= 0 && peer_idx < (int)discovered.size()) {
+            auto selected_peer = discovered[peer_idx];
+            auto conns = p.get_connections();
+            int target_connection_idx = find_connection_index(conns, selected_peer.name);
+
+            if (target_connection_idx < 0) {
+                p.connect(selected_peer);
+                conns = p.get_connections();
+                target_connection_idx = find_connection_index(conns, selected_peer.name);
+            }
+
+            if (target_connection_idx >= 0) {
+                int prev_connection_idx = current_connection_idx;
+                current_connection_idx = target_connection_idx;
+                
+                std::lock_guard<std::mutex> lk2(input_mutex);
+                if (current_connection_idx != prev_connection_idx) {
+                    input_buf.clear();
+                }
+            }
+        }
+    };
+
     std::thread input_thread([&]() {
         while (true) {
             int ch = wgetch(wins.input);
 
             if (ch == KEY_UP) {
-                std::lock_guard<std::mutex> lk(peer_idx_mutex);
-                auto discovered = p.get_discovered_peers();
-                if (selected_peer_idx > 0) {
-                    selected_peer_idx--;
-                } else if (!discovered.empty()) {
-                    selected_peer_idx = discovered.size() - 1;
+                {
+                    std::lock_guard<std::mutex> lk(peer_idx_mutex);
+                    auto discovered = p.get_discovered_peers();
+                    if (selected_peer_idx > 0) {
+                        selected_peer_idx--;
+                    } else if (!discovered.empty()) {
+                        selected_peer_idx = discovered.size() - 1;
+                    }
                 }
+                select_peer_and_connect(selected_peer_idx);
             } else if (ch == KEY_DOWN) {
-                std::lock_guard<std::mutex> lk(peer_idx_mutex);
-                auto discovered = p.get_discovered_peers();
-                if ((int)discovered.size() > 0 && selected_peer_idx < (int)discovered.size() - 1) {
-                    selected_peer_idx++;
-                } else if (!discovered.empty()) {
-                    selected_peer_idx = 0;
+                {
+                    std::lock_guard<std::mutex> lk(peer_idx_mutex);
+                    auto discovered = p.get_discovered_peers();
+                    if ((int)discovered.size() > 0 && selected_peer_idx < (int)discovered.size() - 1) {
+                        selected_peer_idx++;
+                    } else if (!discovered.empty()) {
+                        selected_peer_idx = 0;
+                    }
                 }
+                select_peer_and_connect(selected_peer_idx);
             } else if (ch == '\n' || ch == KEY_ENTER) {
-                std::lock_guard<std::mutex> lk(peer_idx_mutex);
-                auto discovered = p.get_discovered_peers();
-                if (selected_peer_idx >= 0 && selected_peer_idx < (int)discovered.size()) {
-                    auto selected_peer = discovered[selected_peer_idx];
-                    auto conns = p.get_connections();
-                    int target_connection_idx = find_connection_index(conns, selected_peer.name);
-
-                    if (target_connection_idx < 0) {
-                        p.connect(selected_peer);
-                        conns = p.get_connections();
-                        target_connection_idx = find_connection_index(conns, selected_peer.name);
-                    }
-
-                    if (target_connection_idx >= 0) {
-                        current_connection_idx = target_connection_idx;
-                        std::lock_guard<std::mutex> lk2(input_mutex);
-                        if (!input_buf.empty()) {
-                            p.send_to(current_connection_idx, input_buf);
-                            input_buf.clear();
-                        }
-                    }
+                std::lock_guard<std::mutex> lk(input_mutex);
+                if (!input_buf.empty()) {
+                    p.send_to(current_connection_idx, input_buf);
+                    input_buf.clear();
                 }
             } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
                 std::lock_guard<std::mutex> lk(input_mutex);
@@ -281,7 +305,20 @@ int main(int argc, char* argv[]) {
             draw_header(wins.header, my_name, wins.cols);
             draw_sidebar(wins.sidebar, local_port, p.get_discovered_peers(), wins.rows, selected_peer_idx);
         }
-        draw_messages(wins.messages, p.get_messages());
+        
+        std::string current_peer_name;
+        {
+            std::lock_guard<std::mutex> lk(peer_idx_mutex);
+            auto discovered = p.get_discovered_peers();
+            if (current_connection_idx >= 0) {
+                auto conns = p.get_connections();
+                if (current_connection_idx < (int)conns.size()) {
+                    current_peer_name = conns[current_connection_idx].name;
+                }
+            }
+        }
+        
+        draw_messages(wins.messages, p.get_messages(), current_peer_name, my_name);
 
         {
             std::lock_guard<std::mutex> lk(input_mutex);

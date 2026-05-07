@@ -23,7 +23,7 @@ void broadcast_discovery(int port, const std::string& peer_name) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(DISCOVERY_PORT);
-    addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     // Format: "BRIDGE_DISCOVER:port:peer_name"
     std::string message = "BRIDGE_DISCOVER:" + std::to_string(port) + ":" + peer_name;
