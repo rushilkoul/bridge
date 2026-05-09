@@ -30,6 +30,8 @@ Compiles a binary at `./build/bridge`. run:
 ./build/bridge <YOUR_PORT_OF_CHOICE>
 ```
 
+> NOTE: if two users on the network have the same port it skips the user when the UDP broadcast is recieved, those two users cannot see each other. Kinda counterintuitive but yeah make sure you pick a unique port
+
 - Use the arrow keys to switch between peers.
 - Type messages and press Enter to send.
 - Messages from other peers do not appear until you have selected their contact to open the chat window.
@@ -41,4 +43,5 @@ Compiles a binary at `./build/bridge`. run:
 - cmake
 
 ## known issues
-- Messages 
+- UDP discovery should probably not mess up when two users have the same port (they have different IPs)
+- Messages sometimes do not get decrypted, resulting in gibberish in the chat window. (fixes itself immediately after, but idk why it happens only sometimes)
